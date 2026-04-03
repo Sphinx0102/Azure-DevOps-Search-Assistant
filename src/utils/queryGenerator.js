@@ -246,13 +246,15 @@ function isUsefulDynamicSegment(segment = "") {
   return length >= 18;
 }
 
-function buildDynamicErrorAlternatives(literalError) {
+function getDynamicErrorSegments(literalError) {
   const numberPattern = /\b\d+\b/g;
   const staticSegments = [];
   let previousIndex = 0;
   let match;
+  let numericCount = 0;
 
   while ((match = numberPattern.exec(literalError)) !== null) {
+    numericCount += 1;
     const rawSegment = literalError.slice(previousIndex, match.index);
     const cleanSegment = cleanDynamicSegment(rawSegment);
 
@@ -268,13 +270,28 @@ function buildDynamicErrorAlternatives(literalError) {
     staticSegments.push(trailingSegment);
   }
 
-  const segments = uniqueStrings(staticSegments);
+  return {
+    segments: uniqueStrings(staticSegments),
+    numericCount,
+  };
+}
+
+function buildDynamicErrorAlternatives(segments = []) {
   if (!segments.length) {
     return [];
   }
 
   const anchors = segments.slice(0, 3);
   const alternatives = [];
+
+  const firstAnchor = anchors[0];
+  if (firstAnchor) {
+    const firstExact = quote(firstAnchor);
+    alternatives.push(firstExact);
+    alternatives.push(withExt(firstExact, "cs"));
+    alternatives.push(withExt(firstExact, "js"));
+    alternatives.push(withExt(firstExact, "sql"));
+  }
 
   if (anchors.length >= 2) {
     const anchoredQuery = anchors
@@ -286,6 +303,12 @@ function buildDynamicErrorAlternatives(literalError) {
     alternatives.push(withExt(anchoredQuery, "cs"));
     alternatives.push(withExt(anchoredQuery, "js"));
     alternatives.push(withExt(anchoredQuery, "sql"));
+  }
+
+  if (anchors.length >= 3) {
+    const threeAnchorQuery = anchors.map((segment) => quote(segment)).join(" ");
+    alternatives.push(threeAnchorQuery);
+    alternatives.push(withExt(threeAnchorQuery, "cs"));
   }
 
   anchors.forEach((segment) => {
@@ -300,13 +323,18 @@ function buildDynamicErrorAlternatives(literalError) {
 function buildErrorQueries(intent) {
   const literalError = extractExactErrorText(intent);
   const keyword = pickErrorKeyword(intent, literalError);
-  const mainQuery = quote(literalError);
-  const dynamicAlternatives = buildDynamicErrorAlternatives(literalError);
+  const exactLiteralQuery = quote(literalError);
+  const { segments, numericCount } = getDynamicErrorSegments(literalError);
+  const dynamicAlternatives = buildDynamicErrorAlternatives(segments);
+
+  const hasDynamicPattern = numericCount > 0 && segments.length > 0;
+  const mainQuery = hasDynamicPattern ? quote(segments[0]) : exactLiteralQuery;
 
   const baseAlternatives = [
-    withExt(quote(literalError), "cs"),
-    withExt(quote(literalError), "sql"),
-    withExt(quote(literalError), "js"),
+    exactLiteralQuery,
+    withExt(exactLiteralQuery, "cs"),
+    withExt(exactLiteralQuery, "sql"),
+    withExt(exactLiteralQuery, "js"),
     `${keyword} ext:cs`,
     `${keyword} ext:sql`,
     collapseSpaces(literalError),
@@ -323,7 +351,7 @@ function buildErrorQueries(intent) {
     mainQuery,
     alternativeQueries: alternatives,
     explanation:
-      "Se detecto un error y se uso el mensaje exacto. Tambien se generaron variantes por extension y variantes segmentadas para errores con IDs dinamicos.",
+      "Se detecto un error y se priorizo el segmento fijo mas estable para mensajes dinamicos con IDs. Tambien se mantuvo el mensaje completo y variantes por extension.",
   };
 }
 
