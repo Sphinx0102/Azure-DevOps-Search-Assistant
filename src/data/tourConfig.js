@@ -1,5 +1,5 @@
 export const TOUR_STORAGE_KEY = "tourVersion";
-export const CURRENT_TOUR_VERSION = "7";
+export const CURRENT_TOUR_VERSION = "8";
 
 export const TOUR_STEPS = [
   {
@@ -19,7 +19,8 @@ export const TOUR_STEPS = [
   {
     target: '[data-tour="generate-button"]',
     title: "Generar",
-    content: "Genera la busqueda optimizada para Azure DevOps.",
+    content:
+      "Genera una query optimizada con ayudas oficiales de Azure DevOps Search (ext:, file:, path:, filtros de codigo, OR/NEAR y comodines como *, **, ?).",
     placement: "bottom",
   },
   {
