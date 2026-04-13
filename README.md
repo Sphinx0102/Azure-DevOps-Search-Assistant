@@ -34,7 +34,7 @@ npm run dev
 ### Reglas clave
 
 - No abrir PR de `feature/*` directo a `master`.
-- `master` solo acepta PR desde `Desarrollo` (check `validate-source`).
+- `master` solo acepta PR desde `Desarrollo`.
 - Activar borrado automatico de ramas al merge para evitar acumulacion.
 
 ### Comandos utiles
