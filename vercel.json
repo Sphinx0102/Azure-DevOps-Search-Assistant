@@ -1,4 +1,14 @@
 {
+  "rewrites": [
+    {
+      "source": "/wiki",
+      "destination": "/"
+    },
+    {
+      "source": "/wiki/",
+      "destination": "/"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

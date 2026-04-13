@@ -1,6 +1,6 @@
 export const SEARCH_TYPE_VALUES = {
   AUTO: "auto",
-  ERROR: "error",
+  COLUMN: "column",
   STORED_PROCEDURE: "stored_procedure",
   FUNCTION: "function",
   FILE: "file",
@@ -10,7 +10,7 @@ export const SEARCH_TYPE_VALUES = {
 
 export const SEARCH_TYPES = [
   { value: SEARCH_TYPE_VALUES.AUTO, label: "Automatico" },
-  { value: SEARCH_TYPE_VALUES.ERROR, label: "Error" },
+  { value: SEARCH_TYPE_VALUES.COLUMN, label: "Columna (Tabla/SP)" },
   { value: SEARCH_TYPE_VALUES.STORED_PROCEDURE, label: "Stored Procedure" },
   { value: SEARCH_TYPE_VALUES.FUNCTION, label: "Funcion" },
   { value: SEARCH_TYPE_VALUES.FILE, label: "Archivo" },
