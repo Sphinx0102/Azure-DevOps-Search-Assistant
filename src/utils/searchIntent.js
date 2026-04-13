@@ -12,6 +12,30 @@ import {
 } from "./text";
 
 const TYPE_KEYWORDS = {
+  [SEARCH_TYPE_VALUES.COLUMN]: [
+    "columna",
+    "column",
+    "columnas",
+    "columns",
+    "campo",
+    "campos",
+    "field",
+    "fields",
+    "table column",
+    "columna tabla",
+    "column sp",
+    "columna sp",
+    "boolean",
+    "booleano",
+    "bool",
+    "bit",
+    "flag",
+    "bandera",
+    "sn",
+    "si_no",
+    "si/no",
+    "sino",
+  ],
   [SEARCH_TYPE_VALUES.STORED_PROCEDURE]: [
     "sp",
     "stored procedure",
@@ -26,18 +50,6 @@ const TYPE_KEYWORDS = {
     "metodo",
     "method",
     "udf",
-  ],
-  [SEARCH_TYPE_VALUES.ERROR]: [
-    "error",
-    "exception",
-    "excepcion",
-    "overflow",
-    "nullreference",
-    "null reference",
-    "nullreferenceexception",
-    "stacktrace",
-    "timeout",
-    "invalidoperationexception",
   ],
   [SEARCH_TYPE_VALUES.FILE]: [
     "archivo",
@@ -79,6 +91,16 @@ const EXTENSION_HINTS = {
     "index",
     "indice",
     "udf",
+    "columna",
+    "column",
+    "campo",
+    "field",
+    "boolean",
+    "booleano",
+    "bool",
+    "bit",
+    "si_no",
+    "sn",
   ],
   cs: [
     "cs",
@@ -148,6 +170,30 @@ const HINT_KEYWORDS = {
   blazor: ["blazor", "razor component", "componente razor", "component"],
   razorView: ["razor page", "cshtml", "vista", "view"],
   sqlTable: ["tabla", "table", "create table"],
+  sqlColumn: [
+    "columna",
+    "column",
+    "columnas",
+    "columns",
+    "campo",
+    "campos",
+    "field",
+    "fields",
+  ],
+  sqlBoolean: [
+    "sn",
+    "si_no",
+    "si/no",
+    "sino",
+    "boolean",
+    "booleano",
+    "bool",
+    "bit",
+    "flag",
+    "bandera",
+    "true",
+    "false",
+  ],
   sqlCursor: ["cursor", "cursores"],
   sqlIndex: ["index", "indice", "create index"],
   sqlFunction: [
@@ -172,54 +218,39 @@ function hasAnyKeyword(text, tokens, keywords) {
   );
 }
 
-function isLikelyDynamicErrorMessage(text, tokens) {
-  const numericTokenCount = tokens.filter((token) => /^\d+$/.test(token)).length;
-  const wordCount = text.split(" ").filter(Boolean).length;
+function isLikelyBooleanColumnSearch(text, tokens) {
+  const hasSnToken = tokens.some((token) => /^sn([a-z0-9_]+)?$/.test(token));
+  const hasSiNoToken = tokens.some((token) => /^si_?no([a-z0-9_]+)?$/.test(token));
+  const hasMinusOneAndZeroPattern =
+    /(^|[^0-9])-1([^0-9]|$)/.test(text) && /(^|[^0-9])0([^0-9]|$)/.test(text);
+  const hasBooleanKeyword = hasAnyKeyword(text, tokens, HINT_KEYWORDS.sqlBoolean);
 
-  const messageToneKeywords = [
-    "cantidad",
-    "ingresada",
-    "solicitada",
-    "proceso",
-    "finalizado",
-    "fallo",
-    "fallado",
-    "fallida",
-    "invalid",
-    "invalido",
-    "invalida",
-    "must",
-    "debe",
-    "esperada",
-    "expected",
-    "recibida",
-    "received",
-  ];
+  const hasSqlScope =
+    tokens.includes("sql") ||
+    hasAnyKeyword(text, tokens, TYPE_KEYWORDS[SEARCH_TYPE_VALUES.STORED_PROCEDURE]) ||
+    hasAnyKeyword(text, tokens, HINT_KEYWORDS.sqlTable) ||
+    hasAnyKeyword(text, tokens, HINT_KEYWORDS.sqlColumn);
 
-  const hasMessageTone = messageToneKeywords.some((keyword) =>
-    keyword.includes(" ") ? text.includes(keyword) : tokens.includes(keyword)
-  );
-
-  if (numericTokenCount >= 2 && wordCount >= 8) {
+  if (hasSnToken || hasSiNoToken || hasMinusOneAndZeroPattern) {
     return true;
   }
 
-  if (numericTokenCount >= 1 && wordCount >= 10 && hasMessageTone) {
-    return true;
-  }
-
-  return false;
+  return hasBooleanKeyword && hasSqlScope;
 }
 
 function detectByKeywords(text, tokens) {
+  if (hasAnyKeyword(text, tokens, TYPE_KEYWORDS[SEARCH_TYPE_VALUES.COLUMN])) {
+    return SEARCH_TYPE_VALUES.COLUMN;
+  }
+
+  if (isLikelyBooleanColumnSearch(text, tokens)) {
+    return SEARCH_TYPE_VALUES.COLUMN;
+  }
+
   if (
     hasAnyKeyword(text, tokens, TYPE_KEYWORDS[SEARCH_TYPE_VALUES.STORED_PROCEDURE])
   ) {
     return SEARCH_TYPE_VALUES.STORED_PROCEDURE;
-  }
-
-  if (hasAnyKeyword(text, tokens, TYPE_KEYWORDS[SEARCH_TYPE_VALUES.ERROR])) {
-    return SEARCH_TYPE_VALUES.ERROR;
   }
 
   if (hasAnyKeyword(text, tokens, TYPE_KEYWORDS[SEARCH_TYPE_VALUES.REPORT])) {
@@ -238,10 +269,6 @@ function detectByKeywords(text, tokens) {
     return SEARCH_TYPE_VALUES.FILE;
   }
 
-  if (isLikelyDynamicErrorMessage(text, tokens)) {
-    return SEARCH_TYPE_VALUES.ERROR;
-  }
-
   return SEARCH_TYPE_VALUES.AUTO;
 }
 
@@ -251,6 +278,8 @@ function detectExplicitExtension(tokens) {
 
 function buildContextHints(text, tokens) {
   const isSqlFunctionByToken = tokens.some((token) => token.startsWith("fn_"));
+  const hasMinusOneAndZeroPattern =
+    /(^|[^0-9])-1([^0-9]|$)/.test(text) && /(^|[^0-9])0([^0-9]|$)/.test(text);
 
   return {
     isController: hasAnyKeyword(text, tokens, HINT_KEYWORDS.controller),
@@ -259,6 +288,9 @@ function buildContextHints(text, tokens) {
     isBlazor: hasAnyKeyword(text, tokens, HINT_KEYWORDS.blazor),
     isRazorView: hasAnyKeyword(text, tokens, HINT_KEYWORDS.razorView),
     isSqlTable: hasAnyKeyword(text, tokens, HINT_KEYWORDS.sqlTable),
+    isSqlColumn: hasAnyKeyword(text, tokens, HINT_KEYWORDS.sqlColumn),
+    isSqlBoolean:
+      hasAnyKeyword(text, tokens, HINT_KEYWORDS.sqlBoolean) || hasMinusOneAndZeroPattern,
     isSqlCursor: hasAnyKeyword(text, tokens, HINT_KEYWORDS.sqlCursor),
     isSqlIndex: hasAnyKeyword(text, tokens, HINT_KEYWORDS.sqlIndex),
     isSqlFunction:
@@ -274,9 +306,17 @@ function detectExtension(text, tokens, detectedType, contextHints) {
   }
 
   const hasSqlObject =
-    contextHints.isSqlTable || contextHints.isSqlCursor || contextHints.isSqlIndex;
+    contextHints.isSqlTable ||
+    contextHints.isSqlColumn ||
+    contextHints.isSqlBoolean ||
+    contextHints.isSqlCursor ||
+    contextHints.isSqlIndex;
 
   if (hasSqlObject || contextHints.isSqlFunction) {
+    return "sql";
+  }
+
+  if (detectedType === SEARCH_TYPE_VALUES.COLUMN) {
     return "sql";
   }
 
@@ -386,3 +426,6 @@ export function detectSearchIntent(inputText, selectedType = SEARCH_TYPE_VALUES.
     contextHints,
   };
 }
+
+
+

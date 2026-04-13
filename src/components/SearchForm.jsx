@@ -10,9 +10,25 @@ function SearchForm({
 }) {
   const isDisabled = !inputText.trim();
 
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    if (!isDisabled) {
+      onGenerate();
+    }
+  };
+
+  const handleInputKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (!isDisabled) {
+        onGenerate();
+      }
+    }
+  };
+
   return (
     <section className="rounded-2xl border border-slate-700/70 bg-slate-900/80 p-4 shadow-panel backdrop-blur sm:p-6">
-      <div className="space-y-4">
+      <form className="space-y-4" onSubmit={handleSubmit}>
         <label className="block">
           <span className="mb-2 block text-sm font-semibold text-slate-200">
             Que queres buscar
@@ -21,13 +37,14 @@ function SearchForm({
             data-tour="search-input"
             value={inputText}
             onChange={(event) => onInputChange(event.target.value)}
+            onKeyDown={handleInputKeyDown}
             placeholder="Escribi que queres buscar..."
             rows={4}
             maxLength={maxLength}
             className="w-full resize-none rounded-xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-base text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-primary-400 focus:bg-slate-900 focus:ring-4 focus:ring-primary-500/20"
           />
           <p className="mt-2 text-xs text-slate-400">
-            {inputText.length}/{maxLength} caracteres
+            {inputText.length}/{maxLength} caracteres. Enter genera, Shift+Enter agrega salto de linea.
           </p>
         </label>
 
@@ -52,15 +69,14 @@ function SearchForm({
 
           <button
             data-tour="generate-button"
-            type="button"
-            onClick={onGenerate}
+            type="submit"
             disabled={isDisabled}
             className="h-11 rounded-xl bg-primary-600 px-5 text-sm font-semibold text-white transition hover:bg-primary-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400 sm:w-auto"
           >
             Generar busqueda
           </button>
         </div>
-      </div>
+      </form>
     </section>
   );
 }

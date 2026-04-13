@@ -15,7 +15,7 @@ const EMPTY_RESULT = {
   explanation: "",
 };
 
-function SearchBuilderPage() {
+function SearchBuilderPage({ navigate }) {
   const [inputText, setInputText] = useState("");
   const [selectedType, setSelectedType] = useState(SEARCH_TYPE_VALUES.AUTO);
   const [result, setResult] = useState(EMPTY_RESULT);
@@ -59,7 +59,15 @@ function SearchBuilderPage() {
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
         <AppHeader />
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
+          <button
+            data-tour="wiki-button"
+            type="button"
+            onClick={() => navigate?.("/wiki")}
+            className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-200 transition hover:border-sky-400/50 hover:bg-sky-500/20"
+          >
+            Wiki
+          </button>
           <button
             type="button"
             onClick={startTour}
@@ -93,3 +101,4 @@ function SearchBuilderPage() {
 }
 
 export default SearchBuilderPage;
+

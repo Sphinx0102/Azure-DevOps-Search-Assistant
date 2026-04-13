@@ -1,12 +1,6 @@
 import { SEARCH_TYPE_VALUES } from "../data/searchTypes";
 import { detectSearchIntent } from "./searchIntent";
-import {
-  clipWords,
-  collapseSpaces,
-  firstMeaningfulToken,
-  sanitizeUserInput,
-  uniqueStrings,
-} from "./text";
+import { collapseSpaces, sanitizeUserInput, uniqueStrings } from "./text";
 
 function escapeExactQueryContent(value = "") {
   return collapseSpaces(value)
@@ -387,12 +381,25 @@ function appendContextFileQueries(intent, term, filenameToken, ext = "", alterna
 function buildStoredProcedureQueries(intent) {
   const term = resolveCoreTerm(intent);
   const filenameToken = sanitizeFilenameToken(intent.nameToken || term);
-  const mainQuery = withExt(quote(term), "sql");
+  const exactMainQuery = withExt(quote(term), "sql");
   const createOrAlter = buildBooleanOrQuery("CREATE PROCEDURE", "ALTER PROCEDURE");
 
+  const wildcardContainsByFile = filenameToken ? withFile("", `*${filenameToken}*.sql`) : "";
+  const wildcardContainsWithSpScope =
+    wildcardContainsByFile && createOrAlter
+      ? `${wildcardContainsByFile} ${createOrAlter}`
+      : "";
+
+  const shouldPrioritizeWildcard = Boolean(filenameToken) && !intent.quotedText;
+
+  const mainQuery = shouldPrioritizeWildcard
+    ? wildcardContainsWithSpScope || wildcardContainsByFile || exactMainQuery
+    : exactMainQuery;
+
   const alternatives = uniqueStrings([
+    shouldPrioritizeWildcard ? exactMainQuery : wildcardContainsWithSpScope,
+    shouldPrioritizeWildcard ? wildcardContainsByFile : "",
     filenameToken ? withFile("", `${filenameToken}*.sql`) : "",
-    filenameToken ? withFile("", `*${filenameToken}*.sql`) : "",
     '"CREATE PROCEDURE" ext:sql',
     '"ALTER PROCEDURE" ext:sql',
     createOrAlter ? withExt(createOrAlter, "sql") : "",
@@ -408,8 +415,58 @@ function buildStoredProcedureQueries(intent) {
   return {
     mainQuery,
     alternativeQueries: alternatives,
-    explanation:
-      "Se detecto una busqueda de Stored Procedure y se priorizaron filtros oficiales (ext:, file:, path:) con comodines y variantes CREATE/ALTER.",
+    explanation: shouldPrioritizeWildcard
+      ? "Se detecto una busqueda parcial de Stored Procedure y se priorizo *termino* con file: para encontrar coincidencias por fraccion antes de las variantes exactas."
+      : "Se detecto una busqueda de Stored Procedure y se priorizaron filtros oficiales (ext:, file:, path:) con comodines y variantes CREATE/ALTER.",
+  };
+}
+
+function buildColumnQueries(intent) {
+  const term = resolveCoreTerm(intent);
+  const filenameToken = sanitizeFilenameToken(intent.nameToken || term);
+  const hints = intent.contextHints || {};
+
+  const sqlObjectFilter = '("CREATE TABLE" OR "ALTER TABLE" OR "CREATE PROCEDURE" OR "ALTER PROCEDURE")';
+  const tableFilter = '("CREATE TABLE" OR "ALTER TABLE")';
+  const spFilter = '("CREATE PROCEDURE" OR "ALTER PROCEDURE")';
+  const booleanFilter = '("BIT" OR "= -1" OR "= 0" OR "-1" OR "0" OR "TRUE" OR "FALSE")';
+
+  const hasMinusOneAndZeroPattern =
+    /(^|[^0-9])-1([^0-9]|$)/.test(intent.rawInput || "") &&
+    /(^|[^0-9])0([^0-9]|$)/.test(intent.rawInput || "");
+
+  const isBooleanPriority =
+    hints.isSqlBoolean ||
+    /^sn([a-z0-9_]+)?$/i.test(term) ||
+    /^si_?no([a-z0-9_]+)?$/i.test(term) ||
+    hasMinusOneAndZeroPattern;
+  const objectFilter = isBooleanPriority ? `${sqlObjectFilter} ${booleanFilter}` : sqlObjectFilter;
+  const mainQuery = withExt(`${quote(term)} ${objectFilter}`, "sql");
+
+  const alternatives = uniqueStrings([
+    isBooleanPriority ? withExt(`${quote(term)} ${spFilter} ${booleanFilter}`, "sql") : "",
+    isBooleanPriority ? withExt(`${quote(term)} ${tableFilter} ${booleanFilter}`, "sql") : "",
+    isBooleanPriority ? `${quote(term)} "BIT" "CREATE PROCEDURE" ext:sql` : "",
+    isBooleanPriority ? `${quote(term)} "BIT" "CREATE TABLE" ext:sql` : "",
+    term ? withExt(`${quote(term)} ${tableFilter}`, "sql") : "",
+    term ? withExt(`${quote(term)} ${spFilter}`, "sql") : "",
+    term ? `${quote(term)} "CREATE TABLE" ext:sql` : "",
+    term ? `${quote(term)} "ALTER TABLE" ext:sql` : "",
+    term ? `${quote(term)} "CREATE PROCEDURE" ext:sql` : "",
+    term ? `${quote(term)} "ALTER PROCEDURE" ext:sql` : "",
+    term ? `path:/Database/ ${withExt(`${quote(term)} ${objectFilter}`, "sql")}` : "",
+    term ? `path:**/Database/** ${withExt(`${quote(term)} ${objectFilter}`, "sql")}` : "",
+    term && filenameToken
+      ? withFile(withExt(`${quote(term)} ${objectFilter}`, "sql"), `*${filenameToken}*.sql`)
+      : "",
+  ]);
+
+  return {
+    mainQuery,
+    alternativeQueries: alternatives,
+    explanation: isBooleanPriority
+      ? "Se detecto una columna/flag tipo si-no y se priorizo busqueda SQL en tablas y stored procedures (CREATE/ALTER TABLE/PROCEDURE + BIT/-1/0/TRUE/FALSE)."
+      : "Se detecto una columna y se limito la busqueda a tablas y stored procedures con filtros oficiales (CREATE/ALTER TABLE/PROCEDURE, ext:, file:, path:).",
   };
 }
 
@@ -463,200 +520,6 @@ function buildFunctionQueries(intent) {
     ),
     explanation:
       "Se detecto una funcion y se generaron variantes oficiales para Azure DevOps Search con ext:, file:, path:, code-type filters y comodines.",
-  };
-}
-
-function pickErrorKeyword(intent, phrase) {
-  const priority = [
-    "overflow",
-    "nullreference",
-    "nullreferenceexception",
-    "exception",
-    "timeout",
-    "deadlock",
-  ];
-
-  const token = priority.find((item) => intent.allTokens.includes(item));
-  if (token) {
-    return token;
-  }
-
-  return (
-    firstMeaningfulToken(intent.coreTokens.slice().reverse()) ||
-    firstMeaningfulToken(phrase.split(" ").reverse()) ||
-    "error"
-  );
-}
-
-function extractExactErrorText(intent) {
-  if (intent.quotedText) {
-    return collapseSpaces(intent.quotedText);
-  }
-
-  return collapseSpaces(intent.rawInput);
-}
-
-function cleanDynamicSegment(segment = "") {
-  return collapseSpaces(segment)
-    .replace(/^[+"']+|[+"']+$/g, "")
-    .replace(/\s+[+]\s*$/g, "")
-    .trim();
-}
-
-function isUsefulDynamicSegment(segment = "") {
-  if (!segment) {
-    return false;
-  }
-
-  const words = segment.split(" ").filter(Boolean).length;
-  const length = segment.length;
-
-  if (words >= 3) {
-    return true;
-  }
-
-  if (words >= 2 && length >= 12) {
-    return true;
-  }
-
-  if (segment.includes(":") && length >= 7) {
-    return true;
-  }
-
-  return length >= 18;
-}
-
-function getDynamicErrorSegments(literalError) {
-  const numberPattern = /\b\d+\b/g;
-  const staticSegments = [];
-  let previousIndex = 0;
-  let match;
-  let numericCount = 0;
-
-  while ((match = numberPattern.exec(literalError)) !== null) {
-    numericCount += 1;
-    const rawSegment = literalError.slice(previousIndex, match.index);
-    const cleanSegment = cleanDynamicSegment(rawSegment);
-
-    if (isUsefulDynamicSegment(cleanSegment)) {
-      staticSegments.push(cleanSegment);
-    }
-
-    previousIndex = match.index + match[0].length;
-  }
-
-  const trailingSegment = cleanDynamicSegment(literalError.slice(previousIndex));
-  if (isUsefulDynamicSegment(trailingSegment)) {
-    staticSegments.push(trailingSegment);
-  }
-
-  return {
-    segments: uniqueStrings(staticSegments),
-    numericCount,
-  };
-}
-
-function buildDynamicErrorAlternatives(segments = []) {
-  if (!segments.length) {
-    return [];
-  }
-
-  const anchors = segments.slice(0, 3);
-  const alternatives = [];
-
-  const firstAnchor = anchors[0];
-  if (firstAnchor) {
-    const firstExact = quote(firstAnchor);
-    alternatives.push(firstExact);
-    alternatives.push(withExt(firstExact, "cs"));
-    alternatives.push(withExt(firstExact, "js"));
-    alternatives.push(withExt(firstExact, "sql"));
-  }
-
-  if (anchors.length >= 2) {
-    const anchoredQuery = anchors
-      .slice(0, 2)
-      .map((segment) => quote(segment))
-      .join(" ");
-
-    alternatives.push(anchoredQuery);
-    alternatives.push(withExt(anchoredQuery, "cs"));
-    alternatives.push(withExt(anchoredQuery, "js"));
-    alternatives.push(withExt(anchoredQuery, "sql"));
-  }
-
-  if (anchors.length >= 3) {
-    const threeAnchorQuery = anchors.map((segment) => quote(segment)).join(" ");
-    alternatives.push(threeAnchorQuery);
-    alternatives.push(withExt(threeAnchorQuery, "cs"));
-  }
-
-  anchors.forEach((segment) => {
-    const exactSegment = quote(segment);
-    alternatives.push(exactSegment);
-    alternatives.push(withExt(exactSegment, "cs"));
-  });
-
-  return uniqueStrings(alternatives);
-}
-
-function pickNearTokens(intent, literalError) {
-  const fromIntent = (intent.coreTokens || []).map((token) =>
-    sanitizeCodeToken(String(token || "").toLowerCase())
-  );
-
-  const fromText = collapseSpaces(literalError)
-    .split(/[^a-zA-Z0-9_]+/)
-    .map((token) => sanitizeCodeToken(token.toLowerCase()))
-    .filter((token) => token.length >= 3);
-
-  return uniqueStrings([...fromIntent, ...fromText]).slice(0, 2);
-}
-
-function buildErrorQueries(intent) {
-  const literalError = extractExactErrorText(intent);
-  const keyword = sanitizeCodeToken(pickErrorKeyword(intent, literalError).toLowerCase()) || "error";
-  const exactLiteralQuery = quote(literalError);
-  const { segments, numericCount } = getDynamicErrorSegments(literalError);
-  const dynamicAlternatives = buildDynamicErrorAlternatives(segments);
-  const [nearLeft, nearRight] = pickNearTokens(intent, literalError);
-  const nearQuery = buildProximityQuery(nearLeft, nearRight);
-  const errorOrException = buildBooleanOrQuery(keyword, "exception");
-
-  const hasDynamicPattern = numericCount > 0 && segments.length > 0;
-  const mainQuery = hasDynamicPattern ? quote(segments[0]) : exactLiteralQuery;
-
-  const baseAlternatives = [
-    exactLiteralQuery,
-    withExt(exactLiteralQuery, "cs"),
-    withExt(exactLiteralQuery, "sql"),
-    withExt(exactLiteralQuery, "js"),
-    `${keyword} ext:cs`,
-    `${keyword} ext:sql`,
-    nearQuery,
-    nearQuery ? withExt(nearQuery, "cs") : "",
-    nearQuery ? withExt(nearQuery, "sql") : "",
-    errorOrException ? withExt(errorOrException, "cs") : "",
-    errorOrException ? withExt(errorOrException, "sql") : "",
-    `strlit:${keyword}`,
-    `comment:${keyword}`,
-    withFile("", `*${keyword}*`),
-    withPath("", `**/*${keyword}*`),
-    collapseSpaces(literalError),
-    literalError.split(" ").length > 4 ? quote(clipWords(literalError, 4)) : "",
-  ];
-
-  const orderedAlternatives = dynamicAlternatives.length
-    ? [...dynamicAlternatives, ...baseAlternatives]
-    : baseAlternatives;
-
-  const alternatives = uniqueStrings(orderedAlternatives);
-
-  return {
-    mainQuery,
-    alternativeQueries: alternatives,
-    explanation:
-      "Se detecto un error y se priorizaron segmentos estables para mensajes dinamicos, sumando ayudas oficiales como NEAR, OR, strlit:, comment:, ext:, file: y path: con comodines.",
   };
 }
 
@@ -745,6 +608,10 @@ function buildReportQueries(intent) {
 
 function buildAutomaticSqlObjectQueries(intent, term, filenameToken) {
   const hints = intent.contextHints || {};
+
+  if (hints.isSqlColumn || hints.isSqlBoolean) {
+    return buildColumnQueries(intent);
+  }
 
   if (!hints.isSqlTable && !hints.isSqlIndex && !hints.isSqlCursor) {
     return null;
@@ -838,7 +705,7 @@ export function generateQueries(inputText, selectedType = SEARCH_TYPE_VALUES.AUT
   const builders = {
     [SEARCH_TYPE_VALUES.STORED_PROCEDURE]: buildStoredProcedureQueries,
     [SEARCH_TYPE_VALUES.FUNCTION]: buildFunctionQueries,
-    [SEARCH_TYPE_VALUES.ERROR]: buildErrorQueries,
+    [SEARCH_TYPE_VALUES.COLUMN]: buildColumnQueries,
     [SEARCH_TYPE_VALUES.FILE]: buildFileQueries,
     [SEARCH_TYPE_VALUES.VIEW]: buildViewQueries,
     [SEARCH_TYPE_VALUES.REPORT]: buildReportQueries,
@@ -864,4 +731,8 @@ export function generateQueries(inputText, selectedType = SEARCH_TYPE_VALUES.AUT
     prioritizedExt: intent.prioritizedExt,
   };
 }
+
+
+
+
 
